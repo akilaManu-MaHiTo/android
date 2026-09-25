@@ -1,6 +1,9 @@
 package com.example.android
 
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -26,9 +29,14 @@ class Login : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.active_login)
 
         ApiClient.init(this)
+
+        if (checkExistingSession()) {
+            return
+        }
+
+        setContentView(R.layout.active_login)
 
         etEmail = findViewById(R.id.etEmail)
         etPassword = findViewById(R.id.etPassword)
@@ -45,6 +53,57 @@ class Login : AppCompatActivity() {
             val intent = Intent(this, Signin::class.java)
             startActivity(intent)
         }
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val network = connectivityManager?.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun checkExistingSession(): Boolean {
+        val token = ApiClient.token
+        if (!token.isNullOrEmpty()) {
+            if (ApiClient.isTokenValid) {
+                val userJson = JwtUtils.getUserFromToken(token)
+                val role = userJson?.optString("role", "")?.ifEmpty { ApiClient.decodedRole.orEmpty() }.orEmpty()
+
+                // If offline, check JWT key and redirect immediately to the roles page
+                if (!isNetworkAvailable()) {
+                    if (userJson != null && role.isNotEmpty()) {
+                        navigateToRoleScreen(role, userJson)
+                        return true
+                    }
+                }
+
+                lifecycleScope.launch(Dispatchers.IO) {
+                    var finalUserJson = userJson
+                    try {
+                        val serverUser = ApiClient.getUser()
+                        finalUserJson = serverUser
+                    } catch (e: ApiFailure) {
+                        if (e.status == 401) {
+                            ApiClient.clearToken()
+                            return@launch
+                        }
+                    } catch (_: Exception) {
+                        // Offline or network error -> use JWT userJson
+                    }
+
+                    val finalRole = finalUserJson?.optString("role", "")?.ifEmpty { ApiClient.decodedRole.orEmpty() }.orEmpty()
+                    if (finalUserJson != null && finalRole.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            navigateToRoleScreen(finalRole, finalUserJson)
+                        }
+                    }
+                }
+                return true
+            } else {
+                ApiClient.clearToken()
+            }
+        }
+        return false
     }
 
     private fun performLogin() {

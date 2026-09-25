@@ -27,12 +27,28 @@ object ApiClient {
     var token: String?
         get() = sharedPreferences?.getString(KEY_TOKEN, null)
         set(value) {
-            sharedPreferences?.edit()?.putString(KEY_TOKEN, value)?.apply()
+            if (value.isNullOrEmpty()) {
+                sharedPreferences?.edit()?.remove(KEY_TOKEN)?.apply()
+            } else {
+                sharedPreferences?.edit()?.putString(KEY_TOKEN, value)?.apply()
+            }
         }
 
     fun clearToken() {
         token = null
     }
+
+    /**
+     * Checks if a token exists and whether its JWT expiration timestamp is valid.
+     */
+    val isTokenValid: Boolean
+        get() = JwtUtils.isTokenValid(token)
+
+    /**
+     * Extracts the user role from the currently saved JWT token payload.
+     */
+    val decodedRole: String?
+        get() = JwtUtils.getRole(token)
 
     /**
      * Connects using AccountApi instance and passes the global Bearer token.
