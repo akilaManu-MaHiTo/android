@@ -10,9 +10,11 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.example.android.LocalDB.UserDatabaseHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 class Login : AppCompatActivity() {
 
@@ -33,9 +35,15 @@ class Login : AppCompatActivity() {
         btnLogin = findViewById(R.id.btnLogin)
         progressBar = findViewById(R.id.progressBar)
         tvError = findViewById(R.id.tvError)
+        val tvGoToSignin = findViewById<TextView>(R.id.tvGoToSignin)
 
         btnLogin.setOnClickListener {
             performLogin()
+        }
+
+        tvGoToSignin.setOnClickListener {
+            val intent = Intent(this, Signin::class.java)
+            startActivity(intent)
         }
     }
 
@@ -57,49 +65,69 @@ class Login : AppCompatActivity() {
         btnLogin.isEnabled = false
 
         lifecycleScope.launch(Dispatchers.IO) {
+            val dbHelper = UserDatabaseHelper(this@Login)
             try {
                 // 1. Call POST /login API (Token response is stored automatically by ApiClient)
                 ApiClient.login(email, password)
 
                 // 2. Call GET /user API using Bearer Token header in ApiClient
                 val userJson = ApiClient.getUser()
-                val role = userJson.optString("role", "").uppercase()
+
+                // Save user to local SQLite DB with password hash computed from password textbox input
+                dbHelper.saveUser(userJson, plainPassword = password)
+
+                val role = userJson.optString("role", "")
                 val userName = userJson.optString("userName", "User")
 
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
                     btnLogin.isEnabled = true
                     Toast.makeText(this@Login, "Welcome $userName ($role)", Toast.LENGTH_SHORT).show()
-
-                    // Redirect based on role
-                    when {
-                        role == "POSUMER" || role == "PROSUMER" || role.contains("POSUMER") || role.contains("PROSUMER") -> {
-                            val intent = Intent(this@Login, Posumer::class.java).apply {
-                                putExtra("USER_JSON", userJson.toString())
-                            }
-                            startActivity(intent)
-                            finish()
-                        }
-                        role == "GRID" || role == "GRID_OPERATOR" || role.contains("GRID") -> {
-                            val intent = Intent(this@Login, GridOperator::class.java).apply {
-                                putExtra("USER_JSON", userJson.toString())
-                            }
-                            startActivity(intent)
-                            finish()
-                        }
-                        else -> {
-                            tvError.text = "Logged in as $userName ($role)."
-                            tvError.visibility = View.VISIBLE
-                        }
-                    }
+                    navigateToRoleScreen(role, userJson)
                 }
             } catch (e: Exception) {
+                // Online login failed: Fall back to offline login via local SQLite credentials
+                val offlineUser = dbHelper.authenticateOffline(email, password)
+
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
                     btnLogin.isEnabled = true
-                    tvError.text = e.message ?: "Login failed. Please try again."
-                    tvError.visibility = View.VISIBLE
+
+                    if (offlineUser != null) {
+                        val role = offlineUser.optString("role", "")
+                        val userName = offlineUser.optString("userName", "User")
+                        Toast.makeText(this@Login, "Welcome $userName ($role) [Offline Mode]", Toast.LENGTH_SHORT).show()
+                        navigateToRoleScreen(role, offlineUser)
+                    } else {
+                        tvError.text = e.message ?: "Login failed. Please check your credentials or network connection."
+                        tvError.visibility = View.VISIBLE
+                    }
                 }
+            }
+        }
+    }
+
+    private fun navigateToRoleScreen(role: String, userJson: JSONObject) {
+        val upperRole = role.uppercase()
+        when {
+            upperRole == "POSUMER" || upperRole == "PROSUMER" || upperRole.contains("POSUMER") || upperRole.contains("PROSUMER") -> {
+                val intent = Intent(this@Login, Posumer::class.java).apply {
+                    putExtra("USER_JSON", userJson.toString())
+                }
+                startActivity(intent)
+                finish()
+            }
+            upperRole == "GRID" || upperRole == "GRID_OPERATOR" || upperRole.contains("GRID") -> {
+                val intent = Intent(this@Login, GridOperator::class.java).apply {
+                    putExtra("USER_JSON", userJson.toString())
+                }
+                startActivity(intent)
+                finish()
+            }
+            else -> {
+                val userName = userJson.optString("userName", "User")
+                tvError.text = "Logged in as $userName ($role)."
+                tvError.visibility = View.VISIBLE
             }
         }
     }

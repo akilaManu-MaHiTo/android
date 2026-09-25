@@ -83,6 +83,41 @@ object ApiClient {
     }
 
     /**
+     * Calls POST /register via AccountApi to register user with backend.
+     */
+    fun register(
+        userName: String,
+        email: String,
+        plainPassword: String,
+        role: String = "POSUMER",
+        nic: String = ""
+    ): JSONObject {
+        val body = JSONObject().apply {
+            put("userName", userName)
+            put("username", userName)
+            put("email", email)
+            put("password", plainPassword)
+            put("role", role)
+            if (nic.isNotEmpty()) {
+                put("nic", nic)
+            }
+        }
+        val response = request("/register", method = "POST", body = body, requiresAuth = false)
+
+        val extractedToken = response.optString("token").ifEmpty {
+            response.optString("accessToken").ifEmpty {
+                response.optString("jwt").ifEmpty {
+                    response.optJSONObject("data")?.optString("token").orEmpty()
+                }
+            }
+        }
+        if (extractedToken.isNotEmpty()) {
+            token = extractedToken
+        }
+        return response
+    }
+
+    /**
      * Calls GET /user via AccountApi with stored Bearer token in Authorization header.
      */
     fun getUser(): JSONObject {
